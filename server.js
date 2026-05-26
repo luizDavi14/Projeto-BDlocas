@@ -1,280 +1,547 @@
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
-const { createClient } = require('@supabase/supabase-js');
 const path = require('path');
 
+const db = require('./db');
 
 const app = express();
-const port = process.env.PORT || 3000;
 
-// Configuração do Supabase
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseKey || 'placeholder');
+const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
 
-// Middleware para verificar se a configuração do Supabase está presente
-const checkSupabase = (req, res, next) => {
-    if (!supabaseUrl || !supabaseKey) {
-        return res.status(500).json({ error: 'Supabase não configurado. Verifique as variáveis de ambiente.' });
-    }
-    next();
-};
+app.use(
+    express.static(
+        path.join(__dirname, 'public')
+    )
+);
 
-app.use('/api', checkSupabase);
+// ======================================================
+// CLIENTES
+// ======================================================
 
-// --- ROTAS DE CLIENTES ---
+// LISTAR CLIENTES
+app.get('/api/clientes', (req, res) => {
 
-app.get('/api/clientes', async (req, res) => {
-    try {
-        const { data, error } = await supabase.from('clientes').select('*').order('nome');
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
+    const sql = `
+        SELECT *
+        FROM clientes
+        ORDER BY nome ASC
+    `;
 
-app.post('/api/clientes', async (req, res) => {
-    try {
-        const { nome, telefone, email } = req.body;
-        if (!nome || !telefone) return res.status(400).json({ error: 'Nome e telefone são obrigatórios.' });
+    db.query(sql, (err, results) => {
 
-        const { data, error } = await supabase.from('clientes').insert([{ nome, telefone, email }]).select();
-        if (error) throw error;
-        res.status(201).json(data[0]);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.put('/api/clientes/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { nome, telefone, email } = req.body;
-        const { data, error } = await supabase.from('clientes').update({ nome, telefone, email }).eq('id', id).select();
-        if (error) throw error;
-        res.json(data[0]);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.delete('/api/clientes/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        // Opcional: verificar se existem agendamentos pendentes
-        const { error } = await supabase.from('clientes').delete().eq('id', id);
-        if (error) throw error;
-        res.json({ message: 'Cliente excluído com sucesso.' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// --- ROTAS DE AGENDAMENTOS ---
-
-app.get('/api/agendamentos', async (req, res) => {
-    try {
-        const { data, error } = await supabase
-            .from('agendamentos')
-            .select('*, clientes(nome)')
-            .order('data', { ascending: true })
-            .order('hora', { ascending: true });
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/api/agendamentos', async (req, res) => {
-    try {
-        const { cliente_id, servico, data, hora, observacoes, status } = req.body;
-
-        // Validação de agendamento duplicado
-        const { data: existing, error: checkError } = await supabase
-            .from('agendamentos')
-            .select('*')
-            .eq('cliente_id', cliente_id)
-            .eq('data', data)
-            .eq('hora', hora);
-
-        if (checkError) throw checkError;
-        if (existing.length > 0) {
-            return res.status(400).json({ error: 'Este cliente já possui um agendamento nesta data e horário.' });
+        if (err) {
+            return res.status(500).json({
+                error: err.message
+            });
         }
 
-        const { data: newAgendamento, error } = await supabase
-            .from('agendamentos')
-            .insert([{ cliente_id, servico, data, hora, observacoes, status }])
-            .select();
-
-        if (error) throw error;
-        res.status(201).json(newAgendamento[0]);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+        res.json(results);
+    });
 });
 
-app.put('/api/agendamentos/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { cliente_id, servico, data, hora, observacoes, status } = req.body;
+// CRIAR CLIENTE
+app.post('/api/clientes', (req, res) => {
 
-        // Verifica duplicação apenas se estiver mudando data, hora ou cliente_id
-        const { data: current, error: currentError } = await supabase.from('agendamentos').select('*').eq('id', id).single();
-        if (currentError) throw currentError;
+    const {
+        nome,
+        telefone,
+        email
+    } = req.body;
 
-        if (current.data !== data || current.hora !== hora || current.cliente_id !== cliente_id) {
-            const { data: existing, error: checkError } = await supabase
-                .from('agendamentos')
-                .select('*')
-                .eq('cliente_id', cliente_id)
-                .eq('data', data)
-                .eq('hora', hora);
+    if (!nome || !telefone) {
 
-            if (checkError) throw checkError;
-            if (existing.length > 0 && existing[0].id != id) {
-                return res.status(400).json({ error: 'Este cliente já possui um agendamento nesta data e horário.' });
+        return res.status(400).json({
+            error: 'Nome e telefone são obrigatórios.'
+        });
+    }
+
+    const sql = `
+        INSERT INTO clientes
+        (
+            nome,
+            telefone,
+            email
+        )
+        VALUES (?, ?, ?)
+    `;
+
+    db.query(
+        sql,
+        [
+            nome,
+            telefone,
+            email
+        ],
+        (err, result) => {
+
+            if (err) {
+
+                return res.status(500).json({
+                    error: err.message
+                });
             }
+
+            res.status(201).json({
+                id: result.insertId,
+                nome,
+                telefone,
+                email
+            });
+        }
+    );
+});
+
+// ATUALIZAR CLIENTE
+app.put('/api/clientes/:id', (req, res) => {
+
+    const { id } = req.params;
+
+    const {
+        nome,
+        telefone,
+        email
+    } = req.body;
+
+    const sql = `
+        UPDATE clientes
+        SET
+            nome = ?,
+            telefone = ?,
+            email = ?
+        WHERE id = ?
+    `;
+
+    db.query(
+        sql,
+        [
+            nome,
+            telefone,
+            email,
+            id
+        ],
+        (err) => {
+
+            if (err) {
+
+                return res.status(500).json({
+                    error: err.message
+                });
+            }
+
+            res.json({
+                message: 'Cliente atualizado com sucesso.'
+            });
+        }
+    );
+});
+
+// DELETAR CLIENTE
+app.delete('/api/clientes/:id', (req, res) => {
+
+    const { id } = req.params;
+
+    const sql = `
+        DELETE FROM clientes
+        WHERE id = ?
+    `;
+
+    db.query(
+        sql,
+        [id],
+        (err) => {
+
+            if (err) {
+
+                return res.status(500).json({
+                    error: err.message
+                });
+            }
+
+            res.json({
+                message: 'Cliente excluído com sucesso.'
+            });
+        }
+    );
+});
+
+// ======================================================
+// PEDIDOS
+// ======================================================
+
+// LISTAR PEDIDOS
+app.get('/api/pedidos', (req, res) => {
+
+    const sql = `
+        SELECT *
+        FROM pedidos
+        ORDER BY created_at DESC
+    `;
+
+    db.query(sql, (err, results) => {
+
+        if (err) {
+
+            return res.status(500).json({
+                error: err.message
+            });
         }
 
-        const { data: updated, error } = await supabase
-            .from('agendamentos')
-            .update({ cliente_id, servico, data, hora, observacoes, status })
-            .eq('id', id)
-            .select();
-
-        if (error) throw error;
-        res.json(updated[0]);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+        res.json(results);
+    });
 });
 
-app.delete('/api/agendamentos/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { error } = await supabase.from('agendamentos').delete().eq('id', id);
-        if (error) throw error;
-        res.json({ message: 'Agendamento excluído com sucesso.' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+// CRIAR PEDIDO
+app.post('/api/pedidos', (req, res) => {
+
+    const {
+        cliente,
+        pizza,
+        quantidade,
+        endereco,
+        status
+    } = req.body;
+
+    if (
+        !cliente ||
+        !pizza ||
+        !quantidade ||
+        !endereco
+    ) {
+
+        return res.status(400).json({
+            error: 'Preencha todos os campos.'
+        });
     }
+
+    // PREÇOS DAS PIZZAS
+    const precos = {
+        Calabresa: 45,
+        Portuguesa: 50,
+        'Frango Catupiry': 55,
+        Marguerita: 40
+    };
+
+    const precoPizza =
+        precos[pizza] || 40;
+
+    const total =
+        precoPizza * quantidade;
+
+    const sql = `
+        INSERT INTO pedidos
+        (
+            cliente,
+            pizza,
+            quantidade,
+            endereco,
+            status,
+            total
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+    `;
+
+    db.query(
+        sql,
+        [
+            cliente,
+            pizza,
+            quantidade,
+            endereco,
+            status || 'pendente',
+            total
+        ],
+        (err, result) => {
+
+            if (err) {
+
+                return res.status(500).json({
+                    error: err.message
+                });
+            }
+
+            res.status(201).json({
+                id: result.insertId,
+                cliente,
+                pizza,
+                quantidade,
+                endereco,
+                status,
+                total
+            });
+        }
+    );
 });
 
-// --- ROTA DE DASHBOARD ---
-app.get('/api/dashboard', async (req, res) => {
-    try {
-        const hoje = new Date().toISOString().split('T')[0];
+// ATUALIZAR PEDIDO
+app.put('/api/pedidos/:id', (req, res) => {
 
-        // Total de agendamentos hoje
-        const { count: agendamentosHoje, error: err1 } = await supabase
-            .from('agendamentos')
-            .select('*', { count: 'exact', head: true })
-            .eq('data', hoje);
+    const { id } = req.params;
 
-        // Total de clientes
-        const { count: totalClientes, error: err2 } = await supabase
-            .from('clientes')
-            .select('*', { count: 'exact', head: true });
+    const {
+        cliente,
+        pizza,
+        quantidade,
+        endereco,
+        status
+    } = req.body;
 
-        // Próximos 2 agendamentos a partir de agora
-        const horaAtual = new Date().toTimeString().split(' ')[0].substring(0, 5);
-        const { data: proximos, error: err3 } = await supabase
-            .from('agendamentos')
-            .select('*, clientes(nome)')
-            .eq('data', hoje)
-            .gte('hora', horaAtual)
-            .order('hora', { ascending: true })
-            .limit(2);
+    const precos = {
+        Calabresa: 45,
+        Portuguesa: 50,
+        'Frango Catupiry': 55,
+        Marguerita: 40
+    };
 
-        // Agendamentos do dia (lista simples)
-        const { data: agendamentosDoDia, error: err4 } = await supabase
-            .from('agendamentos')
-            .select('*, clientes(nome)')
-            .eq('data', hoje)
-            .order('hora', { ascending: true });
+    const precoPizza =
+        precos[pizza] || 40;
 
-        if (err1 || err2 || err3 || err4) throw err1 || err2 || err3 || err4;
+    const total =
+        precoPizza * quantidade;
+
+    const sql = `
+        UPDATE pedidos
+        SET
+            cliente = ?,
+            pizza = ?,
+            quantidade = ?,
+            endereco = ?,
+            status = ?,
+            total = ?
+        WHERE id = ?
+    `;
+
+    db.query(
+        sql,
+        [
+            cliente,
+            pizza,
+            quantidade,
+            endereco,
+            status,
+            total,
+            id
+        ],
+        (err) => {
+
+            if (err) {
+
+                return res.status(500).json({
+                    error: err.message
+                });
+            }
+
+            res.json({
+                message: 'Pedido atualizado com sucesso.'
+            });
+        }
+    );
+});
+
+// DELETAR PEDIDO
+app.delete('/api/pedidos/:id', (req, res) => {
+
+    const { id } = req.params;
+
+    const sql = `
+        DELETE FROM pedidos
+        WHERE id = ?
+    `;
+
+    db.query(
+        sql,
+        [id],
+        (err) => {
+
+            if (err) {
+
+                return res.status(500).json({
+                    error: err.message
+                });
+            }
+
+            res.json({
+                message: 'Pedido excluído com sucesso.'
+            });
+        }
+    );
+});
+
+// ======================================================
+// DASHBOARD
+// ======================================================
+
+app.get('/api/dashboard', (req, res) => {
+
+    const hoje =
+        new Date()
+        .toISOString()
+        .split('T')[0];
+
+    const pedidosHojeSql = `
+        SELECT COUNT(*) AS total
+        FROM pedidos
+        WHERE DATE(created_at) = ?
+    `;
+
+    db.query(
+        pedidosHojeSql,
+        [hoje],
+        (err1, pedidosHoje) => {
+
+            if (err1) {
+
+                return res.status(500).json({
+                    error: err1.message
+                });
+            }
+
+            const faturamentoSql = `
+                SELECT SUM(total) AS faturamento
+                FROM pedidos
+            `;
+
+            db.query(
+                faturamentoSql,
+                (err2, faturamento) => {
+
+                    if (err2) {
+
+                        return res.status(500).json({
+                            error: err2.message
+                        });
+                    }
+
+                    const pendentesSql = `
+                        SELECT COUNT(*) AS pendentes
+                        FROM pedidos
+                        WHERE status = 'pendente'
+                    `;
+
+                    db.query(
+                        pendentesSql,
+                        (err3, pendentes) => {
+
+                            if (err3) {
+
+                                return res.status(500).json({
+                                    error: err3.message
+                                });
+                            }
+
+                            const clientesSql = `
+                                SELECT COUNT(*) AS total
+                                FROM clientes
+                            `;
+
+                            db.query(
+                                clientesSql,
+                                (err4, clientes) => {
+
+                                    if (err4) {
+
+                                        return res.status(500).json({
+                                            error: err4.message
+                                        });
+                                    }
+
+                                    res.json({
+                                        pedidosHoje:
+                                            pedidosHoje[0].total,
+
+                                        faturamento:
+                                            faturamento[0].faturamento || 0,
+
+                                        pendentes:
+                                            pendentes[0].pendentes,
+
+                                        totalClientes:
+                                            clientes[0].total
+                                    });
+                                }
+                            );
+                        }
+                    );
+                }
+            );
+        }
+    );
+});
+
+// ======================================================
+// ESTATÍSTICAS
+// ======================================================
+
+app.get('/api/estatisticas', (req, res) => {
+
+    const sql = `
+        SELECT *
+        FROM pedidos
+    `;
+
+    db.query(sql, (err, results) => {
+
+        if (err) {
+
+            return res.status(500).json({
+                error: err.message
+            });
+        }
+
+        const pizzasRanking = {};
+
+        const statusPedidos = {
+            pendente: 0,
+            preparando: 0,
+            saiu_entrega: 0,
+            entregue: 0,
+            cancelado: 0
+        };
+
+        results.forEach(pedido => {
+
+            pizzasRanking[pedido.pizza] =
+                (pizzasRanking[pedido.pizza] || 0) + 1;
+
+            if (pedido.status) {
+                statusPedidos[pedido.status]++;
+            }
+        });
 
         res.json({
-            agendamentosHoje: agendamentosHoje || 0,
-            totalClientes: totalClientes || 0,
-            proximos: proximos || [],
-            agendamentosDoDia: agendamentosDoDia || []
+            totalPedidos: results.length,
+            pizzasRanking,
+            statusPedidos
         });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+    });
 });
 
-// --- ROTA DE ESTATÍSTICAS ---
-app.get('/api/estatisticas', async (req, res) => {
-    try {
-        const hoje = new Date();
-        const seteDiasAtras = new Date(hoje);
-        seteDiasAtras.setDate(hoje.getDate() - 6);
-        const dataInicial = seteDiasAtras.toISOString().split('T')[0];
-        const dataFinal = hoje.toISOString().split('T')[0];
+// ======================================================
+// SPA
+// ======================================================
 
-        const { data: agendamentos, error } = await supabase
-            .from('agendamentos')
-            .select('*')
-            .gte('data', dataInicial)
-            .lte('data', dataFinal);
-
-        if (error) throw error;
-
-        // Processar para gráficos (7 dias)
-        const agendamentosPorDia = {};
-        for (let i = 0; i < 7; i++) {
-            const d = new Date(seteDiasAtras);
-            d.setDate(d.getDate() + i);
-            const dateStr = d.toISOString().split('T')[0];
-            agendamentosPorDia[dateStr] = 0;
-        }
-
-        const agendamentosPorStatus = { confirmado: 0, cancelado: 0, pendente: 0 };
-        const servicosRanking = {};
-
-        agendamentos.forEach(a => {
-            // Por dia
-            if (agendamentosPorDia[a.data] !== undefined) {
-                agendamentosPorDia[a.data]++;
-            }
-
-            // Por status
-            if (a.status) {
-                agendamentosPorStatus[a.status] = (agendamentosPorStatus[a.status] || 0) + 1;
-            }
-
-            // Por serviço
-            servicosRanking[a.servico] = (servicosRanking[a.servico] || 0) + 1;
-        });
-
-        res.json({
-            agendamentosPorDia,
-            agendamentosPorStatus,
-            servicosRanking
-        });
-
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-
-// Serve frontend para qualquer outra rota (SPA fallback)
 app.use((req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+
+    res.sendFile(
+        path.join(
+            __dirname,
+            'public',
+            'index.html'
+        )
+    );
 });
+
+// ======================================================
+// SERVIDOR
+// ======================================================
 
 app.listen(port, () => {
-    console.log(`Servidor rodando em http://localhost:${port}`);
+
+    console.log(
+        `Servidor rodando em http://localhost:${port}`
+    );
 });

@@ -1,25 +1,27 @@
 -- Tabela de clientes
 CREATE TABLE clientes (
-  id SERIAL PRIMARY KEY,
-  nome TEXT NOT NULL,
-  telefone TEXT NOT NULL,
-  email TEXT,
-  created_at TIMESTAMP DEFAULT NOW()
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  nome VARCHAR(255) NOT NULL,
+  telefone VARCHAR(20) NOT NULL,
+  email VARCHAR(255),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Tabela de agendamentos
 CREATE TABLE agendamentos (
-  id SERIAL PRIMARY KEY,
-  cliente_id INTEGER REFERENCES clientes(id) ON DELETE CASCADE,
-  servico TEXT NOT NULL,
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  cliente_id INT,
+  servico VARCHAR(255) NOT NULL,
   data DATE NOT NULL,
   hora TIME NOT NULL,
   observacoes TEXT,
-  status TEXT CHECK (status IN ('confirmado', 'cancelado', 'pendente')) DEFAULT 'pendente',
-  created_at TIMESTAMP DEFAULT NOW(),
+  status ENUM('confirmado', 'cancelado', 'pendente') DEFAULT 'pendente',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+  CONSTRAINT fk_cliente
+    FOREIGN KEY (cliente_id)
+    REFERENCES clientes(id)
+    ON DELETE CASCADE,
+
   UNIQUE(cliente_id, data, hora)
 );
-
--- Desabilitar Row Level Security (RLS) para permitir que a API funcione com a chave anônima
-ALTER TABLE clientes DISABLE ROW LEVEL SECURITY;
-ALTER TABLE agendamentos DISABLE ROW LEVEL SECURITY;
